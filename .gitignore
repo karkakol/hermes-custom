@@ -2,4 +2,5 @@ src/
 build/
 dist/
 vendor/
+logs/
 .DS_Store
