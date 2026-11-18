@@ -1,0 +1,5 @@
+# hermes <release tag> [dsym]   -> served under com/facebook/hermes/hermes-ios/<ver>/
+#   add "dsym" to also host the dSYMs, like Maven (about 810 MB per version; GitHub Pages allows 1 GB in total)
+hermes hermes-v250829098.0.17-custom.1 dsym
+# rn-deps <react native version>   -> copied unchanged from Maven Central (for apps using RCT_USE_RN_DEP)
+rn-deps 0.86.3
