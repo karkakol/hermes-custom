@@ -1,0 +1,28 @@
+name: Checkout patched Hermes
+description: Checks out facebook/hermes at the given tag into ./hermes and applies every patch in ./patches.
+inputs:
+  hermes-tag:
+    description: Hermes git tag, e.g. hermes-v250829098.0.17
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Checkout facebook/hermes
+      uses: actions/checkout@v4
+      with:
+        repository: facebook/hermes
+        ref: ${{ inputs.hermes-tag }}
+        path: hermes
+    - name: Apply patches
+      shell: bash
+      run: |
+        set -euo pipefail
+        for patch in patches/*.patch; do
+          echo "Applying $patch"
+          git -C hermes apply --verbose "$GITHUB_WORKSPACE/$patch"
+        done
+    - name: Select Xcode
+      shell: bash
+      run: |
+        sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app"
+        xcodebuild -version

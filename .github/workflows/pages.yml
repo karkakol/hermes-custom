@@ -1,0 +1,78 @@
+name: Publish Maven site
+
+# Serves the releases listed in hosting.txt on GitHub Pages in Maven's layout, so React Native
+# downloads them through ENTERPRISE_REPOSITORY=https://<owner>.github.io/<repo>/maven2.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [hosting.txt]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Maven layout
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          root=site/maven2
+          while read -r kind value option; do
+            [[ -z "${kind:-}" || "$kind" == \#* ]] && continue
+            case "$kind" in
+              hermes)
+                hermes_tag="${value%-custom.*}"
+                ver="${hermes_tag#hermes-v}"
+                dir="$root/com/facebook/hermes/hermes-ios/$ver"
+                mkdir -p "$dir"
+                for c in debug release; do
+                  gh release download "$value" -R "$GITHUB_REPOSITORY" \
+                    -p "hermes-ios-$ver-$c.tar.gz" -O "$dir/hermes-ios-$ver-hermes-ios-$c.tar.gz"
+                  if [[ "${option:-}" == "dsym" ]]; then
+                    gh release download "$value" -R "$GITHUB_REPOSITORY" \
+                      -p "hermes-ios-$ver-$c-dSYM.tar.gz" -O "$dir/hermes-ios-$ver-hermes-framework-dSYM-$c.tar.gz"
+                  fi
+                done
+                ;;
+              rn-deps)
+                dir="$root/com/facebook/react/react-native-artifacts/$value"
+                mkdir -p "$dir"
+                for c in debug release; do
+                  f="react-native-artifacts-$value-reactnative-dependencies-$c.tar.gz"
+                  curl -fsSL "https://repo1.maven.org/maven2/com/facebook/react/react-native-artifacts/$value/$f" -o "$dir/$f"
+                done
+                ;;
+              *)
+                echo "Unknown line in hosting.txt: $kind $value" >&2
+                exit 1
+                ;;
+            esac
+          done < hosting.txt
+          find site -name '*.tar.gz' | while read -r f; do sha1sum "$f" | cut -d' ' -f1 > "$f.sha1"; done
+          find site -type f | sort
+          du -sh site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

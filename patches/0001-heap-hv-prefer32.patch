@@ -1,0 +1,12 @@
+diff --git a/utils/build-apple-framework-rn.sh b/utils/build-apple-framework-rn.sh
+index e58a8d1..f1474c0 100755
+--- a/utils/build-apple-framework-rn.sh
++++ b/utils/build-apple-framework-rn.sh
+@@ -124,6 +124,7 @@ function configure_apple_framework {
+       -DIMPORT_HOST_COMPILERS:PATH="$IMPORT_HERMESC_PATH" \
+       -DJSI_DIR="$JSI_PATH" \
+       -DHERMES_RELEASE_VERSION="$(get_release_version)" \
++      -DHERMESVM_HEAP_HV_MODE:STRING=HEAP_HV_PREFER32 \
+       -DCMAKE_BUILD_TYPE="$cmake_build_type" \
+       $boost_context_flag
+     popd > /dev/null || exit 1
