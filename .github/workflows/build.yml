@@ -2,6 +2,8 @@ name: Build Hermes
 
 # Mirrors facebook/hermes .github/workflows/rn-build-hermes.yml (Apple part), with ./patches applied
 # on top, and publishes the result as a GitHub Release. pages.yml serves it in Maven's layout.
+# Each flavor builds hermesc, all slices and the tarball in one job, so a run needs only two macOS
+# runners.
 
 on:
   workflow_dispatch:
@@ -15,6 +17,14 @@ on:
         required: true
         default: '1'
         type: string
+      runner:
+        description: macOS runner image (switch to Intel when arm64 runners are short)
+        required: true
+        default: macos-15
+        type: choice
+        options:
+          - macos-15
+          - macos-15-intel
       publish:
         description: Create the GitHub Release (off = dry run, artifacts only)
         required: true
@@ -29,73 +39,8 @@ env:
   XCODE_VERSION: '16.4'
 
 jobs:
-  hermesc:
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/checkout-hermes
-        with:
-          hermes-tag: ${{ inputs.hermes-tag }}
-      - name: Build host hermesc
-        working-directory: hermes
-        run: |
-          source ./utils/build-apple-framework-rn.sh
-          build_host_hermesc_if_needed || true
-          if [[ ! -x build_host_hermesc/bin/hermesc ]]; then
-            tail -150 build_host_hermesc/CMakeFiles/CMakeConfigureLog.yaml || true
-            exit 1
-          fi
-      - uses: actions/upload-artifact@v4
-        with:
-          name: hermesc-apple
-          path: hermes/build_host_hermesc
-
-  slices:
-    needs: hermesc
-    runs-on: macos-15
-    env:
-      IOS_DEPLOYMENT_TARGET: '15.1'
-      XROS_DEPLOYMENT_TARGET: '1.0'
-      MAC_DEPLOYMENT_TARGET: '10.15'
-    strategy:
-      fail-fast: false
-      matrix:
-        flavor: [Debug, Release]
-        slice: [macosx, iphoneos, iphonesimulator, appletvos, appletvsimulator, catalyst, xros, xrsimulator]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/checkout-hermes
-        with:
-          hermes-tag: ${{ inputs.hermes-tag }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: hermesc-apple
-          path: hermes/build_host_hermesc
-      - name: Build ${{ matrix.slice }} (${{ matrix.flavor }})
-        working-directory: hermes
-        env:
-          SLICE: ${{ matrix.slice }}
-          FLAVOR: ${{ matrix.flavor }}
-        run: |
-          set -euo pipefail
-          chmod +x ./build_host_hermesc/bin/hermesc
-          if [[ "$SLICE" == "macosx" ]]; then
-            BUILD_TYPE="$FLAVOR" ./utils/build-mac-framework-rn.sh
-          else
-            BUILD_TYPE="$FLAVOR" ./utils/build-ios-framework-rn.sh "$SLICE"
-          fi
-          test -d "build_$SLICE/lib/hermesvm.framework"
-          test -d "build_$SLICE/lib/hermesvm.framework.dSYM"
-          mv "build_$SLICE" "build_${SLICE}_${FLAVOR}"
-          tar -czf "build_${SLICE}_${FLAVOR}.tar.gz" "build_${SLICE}_${FLAVOR}"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: slice-${{ matrix.slice }}-${{ matrix.flavor }}
-          path: hermes/build_${{ matrix.slice }}_${{ matrix.flavor }}.tar.gz
-
-  package:
-    needs: slices
-    runs-on: macos-15
+  build:
+    runs-on: ${{ inputs.runner }}
     strategy:
       fail-fast: false
       matrix:
@@ -108,21 +53,35 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: slice-*-${{ matrix.flavor }}
-          path: hermes
-          merge-multiple: true
-      - name: Unpack slices
+      - name: Build host hermesc
+        working-directory: hermes
+        run: |
+          source ./utils/build-apple-framework-rn.sh
+          build_host_hermesc_if_needed || true
+          if [[ ! -x build_host_hermesc/bin/hermesc ]]; then
+            tail -150 build_host_hermesc/CMakeFiles/CMakeConfigureLog.yaml || true
+            exit 1
+          fi
+      - name: Build slices (${{ matrix.flavor }})
         working-directory: hermes
         env:
           FLAVOR: ${{ matrix.flavor }}
+          # Only for the slices: set for the host hermesc build, these make it target other platforms.
+          IOS_DEPLOYMENT_TARGET: '15.1'
+          XROS_DEPLOYMENT_TARGET: '1.0'
+          MAC_DEPLOYMENT_TARGET: '10.15'
         run: |
           set -euo pipefail
-          for archive in build_*_"$FLAVOR".tar.gz; do
-            tar -xzf "$archive"
-            dir="${archive%.tar.gz}"
-            mv "$dir" "${dir%_"$FLAVOR"}"
+          for slice in macosx iphoneos iphonesimulator appletvos appletvsimulator catalyst xros xrsimulator; do
+            echo "::group::$slice ($FLAVOR)"
+            if [[ "$slice" == "macosx" ]]; then
+              BUILD_TYPE="$FLAVOR" ./utils/build-mac-framework-rn.sh
+            else
+              BUILD_TYPE="$FLAVOR" ./utils/build-ios-framework-rn.sh "$slice"
+            fi
+            test -d "build_$slice/lib/hermesvm.framework"
+            test -d "build_$slice/lib/hermesvm.framework.dSYM"
+            echo "::endgroup::"
           done
       - name: Verify CMake configuration
         run: scripts/verify-cmake.sh hermes expected-cmake.txt
@@ -168,7 +127,7 @@ jobs:
           path: dist
 
   release:
-    needs: package
+    needs: build
     if: inputs.publish
     runs-on: ubuntu-latest
     permissions:
